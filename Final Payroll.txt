@@ -1,0 +1,233 @@
+function onOpen() {
+  var ui = SpreadsheetApp.getUi();
+  ui.createMenu('Payslips')
+    .addItem('Dispatch Payslips', 'sendPayslips')
+    .addToUi();
+  zebraColorAllSheets(SpreadsheetApp.getActiveSpreadsheet());
+}
+
+function sendPayslips() {
+  try {
+    var sheet = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();
+    var data = sheet.getDataRange().getValues();
+    var headers = data[0];
+    
+    // Get column indices (ensure these columns exist in your main sheet)
+    var emailCol = headers.indexOf("Email");
+    var nameCol = headers.indexOf("Employee Name");
+    var salaryCol = headers.indexOf("Salary");
+    var incentivesCol = headers.indexOf("Incentives");
+    var holidaysCol = headers.indexOf("Holidays");
+    
+    if (emailCol === -1 || nameCol === -1 || salaryCol === -1 || incentivesCol === -1 || holidaysCol === -1) {
+      throw new Error("Missing required columns. Required columns: Employee Name, Email, Salary, Incentives, Holidays.");
+    }
+    
+    // Use last month's label (since you pay last month's salary)
+    var today = new Date();
+    today.setMonth(today.getMonth() - 1);
+    var month = today.toLocaleString('default', { month: 'long', year: 'numeric' });
+    
+    // Process each row (starting from row 2)
+    for (var i = 1; i < data.length; i++) {
+      try {
+        var email = data[i][emailCol];
+        var name = data[i][nameCol];
+        var salary = parseFloat(data[i][salaryCol]) || 0;
+        var incentives = parseFloat(data[i][incentivesCol]) || 0;
+        var holidays = parseFloat(data[i][holidaysCol]) || 0;
+        
+        if (!email || !name) {
+          Logger.log(`Row ${i + 1}: Missing email or name.`);
+          continue;
+        }
+        
+        if (!isValidEmail(email)) {
+          Logger.log(`Row ${i + 1}: Invalid email address (${email}).`);
+          continue;
+        }
+        
+        // Compute the new values
+        var salaryAfterIncentives = salary + incentives;
+        var holidayDeduction = holidays * 500;
+        var utilityDeduction = 300;
+        var totalDeduction = holidayDeduction + utilityDeduction;
+        var totalSalary = salaryAfterIncentives - totalDeduction;
+        
+        // Generate the HTML email content
+        var htmlContent = generatePayslipHTML(
+          name,
+          salary,
+          incentives,
+          holidays,
+          salaryAfterIncentives,
+          holidayDeduction,
+          utilityDeduction,
+          totalSalary,
+          month
+        );
+        var subject = `Your Payslip for ${month}`;
+        
+        MailApp.sendEmail({
+          to: email,
+          subject: subject,
+          htmlBody: htmlContent,
+        });
+      } catch (rowError) {
+        Logger.log(`Row ${i + 1}: ${rowError.message}`);
+      }
+    }
+    
+    SpreadsheetApp.getUi().alert("Payslips sent successfully! Moving data to Payroll History...");
+    moveProcessedDataToHistory();
+    
+  } catch (error) {
+    Logger.log(error.message);
+    MailApp.sendEmail("pranaypudota@gmail.com", "Payroll Script Error", error.message); // Enter Your Email Here
+    SpreadsheetApp.getUi().alert("Error: " + error.message);
+  }
+}
+
+function generatePayslipHTML(name, salary, incentives, holidays, salaryAfterIncentives, holidayDeduction, utilityDeduction, totalSalary, month) {
+  return `
+    <html>
+      <body>
+       <p>Hello <strong>${name}</strong>,</p>
+
+       <p>Please view your payslip for <strong>${month}</strong> in an HTML-compatible email client.</p>
+
+       <p>Best,<br>HR Team</p>
+
+        <h2>Payslip for ${month}</h2>
+        <table border="1" cellpadding="5" cellspacing="0" style="border-collapse: collapse;">
+          <tr>
+            <th style="text-align: left;">Employee Name</th>
+            <td>${name}</td>
+          </tr>
+          <tr>
+            <th style="text-align: left;">Base Salary</th>
+            <td>₹${salary.toFixed(2)}</td>
+          </tr>
+          <tr>
+            <th style="text-align: left;">Incentives</th>
+            <td>₹${incentives.toFixed(2)}</td>
+          </tr>
+          <tr>
+            <th style="text-align: left;">Salary after Incentives</th>
+            <td>₹${salaryAfterIncentives.toFixed(2)}</td>
+          </tr>
+          <tr>
+            <th style="text-align: left;">Holidays Taken</th>
+            <td>${holidays}</td>
+          </tr>
+          <tr>
+            <th style="text-align: left;">Holiday Deduction (@₹500 per day)</th>
+            <td>₹${holidayDeduction.toFixed(2)}</td>
+          </tr>
+          <tr>
+            <th style="text-align: left;">Utility Deduction</th>
+            <td>₹${utilityDeduction.toFixed(2)}</td>
+          </tr>
+          <tr>
+            <th style="text-align: left;">Total Deduction</th>
+            <td>₹${(holidayDeduction + utilityDeduction).toFixed(2)}</td>
+          </tr>
+          <tr>
+            <th style="text-align: left;">Total Salary</th>
+            <td>₹${totalSalary.toFixed(2)}</td>
+          </tr>
+        </table>
+        <p>Total Salary = (Base Salary + Incentives) - (Holiday Deduction + Utility Deduction)</p>
+      </body>
+    </html>
+  `;
+}
+
+function moveProcessedDataToHistory() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getActiveSheet();
+  var data = sheet.getDataRange().getValues();
+  if (data.length <= 1) return; // No data to process
+  
+  // Get column indices from the main sheet
+  var headers = data[0];
+  var nameIndex = headers.indexOf("Employee Name");
+  var emailIndex = headers.indexOf("Email");
+  var salaryIndex = headers.indexOf("Salary");
+  var incentivesIndex = headers.indexOf("Incentives");
+  var holidaysIndex = headers.indexOf("Holidays");
+  
+  if (nameIndex === -1 || emailIndex === -1 || salaryIndex === -1 || incentivesIndex === -1 || holidaysIndex === -1) {
+    SpreadsheetApp.getUi().alert("Missing required columns in the main sheet for processing history.");
+    return;
+  }
+  
+  // Get or create the Payroll History sheet
+  var historySheet = ss.getSheetByName("Payroll History") || ss.insertSheet("Payroll History");
+  
+  // Define the history header (Employee Name, Email, Salary, Incentives, Holidays, Total Salary, Month)
+  var historyHeader = ["Employee Name", "Email", "Salary", "Incentives", "Holidays", "Total Salary", "Month"];
+  var historyData = historySheet.getDataRange().getValues();
+  if (historyData.length === 0 || historyData[0].join() !== historyHeader.join()) {
+    historySheet.clear();
+    historySheet.appendRow(historyHeader);
+  }
+  
+  // Set the month label (last month)
+  var today = new Date();
+  today.setMonth(today.getMonth() - 1);
+  var month = today.toLocaleString('default', { month: 'long', year: 'numeric' });
+  
+  // Prepare processed data for each employee (row)
+  var processedData = [];
+  for (var i = 1; i < data.length; i++) {
+    var row = data[i];
+    var name = row[nameIndex];
+    var email = row[emailIndex];
+    var salary = parseFloat(row[salaryIndex]) || 0;
+    var incentives = parseFloat(row[incentivesIndex]) || 0;
+    var holidays = parseFloat(row[holidaysIndex]) || 0;
+    
+    var salaryAfterIncentives = salary + incentives;
+    var holidayDeduction = holidays * 500;
+    var utilityDeduction = 300;
+    var totalSalary = salaryAfterIncentives - (holidayDeduction + utilityDeduction);
+    
+    processedData.push([name, email, salary, incentives, holidays, totalSalary, month]);
+  }
+  
+  // Append processed data to the Payroll History sheet
+  if (processedData.length > 0) {
+    historySheet.getRange(historySheet.getLastRow() + 1, 1, processedData.length, historyHeader.length).setValues(processedData);
+  }
+  
+  // Instead of clearing the whole sheet, clear only the monthly data columns (Salary, Incentives, Holidays)
+  var numRows = sheet.getLastRow() - 1;
+  if (numRows > 0) {
+    var salaryColIndex = salaryIndex + 1;
+    var incentivesColIndex = incentivesIndex + 1;
+    var holidaysColIndex = holidaysIndex + 1;
+    sheet.getRange(2, salaryColIndex, numRows, 1).clearContent();
+    sheet.getRange(2, incentivesColIndex, numRows, 1).clearContent();
+    sheet.getRange(2, holidaysColIndex, numRows, 1).clearContent();
+  }
+  
+  SpreadsheetApp.getUi().alert("Processed data moved to Payroll History and main sheet updated.");
+}
+
+function zebraColorAllSheets(spreadsheet) {
+  var sheets = spreadsheet.getSheets();
+  sheets.forEach(function(sheet) {
+    var range = sheet.getDataRange();
+    var backgrounds = range.getBackgrounds();
+    for (var i = 1; i < backgrounds.length; i++) {
+      backgrounds[i] = Array(backgrounds[i].length).fill(i % 2 === 0 ? "#f0f0f0" : "#ffffff");
+    }
+    range.setBackgrounds(backgrounds);
+  });
+}
+
+function isValidEmail(email) {
+  var emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  return emailPattern.test(email);
+}
