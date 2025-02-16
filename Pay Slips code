@@ -83,7 +83,7 @@ function sendPayslips() {
     
   } catch (error) {
     Logger.log(error.message);
-    MailApp.sendEmail("pranaypudota@gmail.com", "Payroll Script Error", error.message); // Enter Your Email Here
+    MailApp.sendEmail("abcdef@gmail.com", "Payroll Script Error", error.message); // Enter Your Email Here
     SpreadsheetApp.getUi().alert("Error: " + error.message);
   }
 }
